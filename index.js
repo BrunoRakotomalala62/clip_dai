@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const { spawn } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -22,6 +23,75 @@ function formatDuration(seconds) {
     return `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 
+function sanitizeFilename(filename) {
+    return filename.replace(/[^a-zA-Z0-9\u00C0-\u024F\s\-_]/g, '').trim().substring(0, 100) || 'video';
+}
+
+async function getVideoStreamUrl(videoId, requestedQuality = '360p') {
+    const metadataUrl = `https://www.dailymotion.com/player/metadata/video/${videoId}`;
+    
+    const qualityMap = {
+        '1080p': '1080',
+        '720p': '720',
+        '480p': '480',
+        '360p': '380',
+        '240p': '240'
+    };
+    
+    try {
+        const response = await axios.get(metadataUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.dailymotion.com/'
+            }
+        });
+        
+        const data = response.data;
+        const title = data.title || 'video';
+        const duration = data.duration || 0;
+        
+        let streamUrl = null;
+        let selectedQuality = null;
+        
+        if (data.qualities) {
+            const qualities = data.qualities;
+            const targetQuality = qualityMap[requestedQuality] || '380';
+            
+            if (qualities[targetQuality] && Array.isArray(qualities[targetQuality])) {
+                for (const stream of qualities[targetQuality]) {
+                    if (stream.url) {
+                        streamUrl = stream.url;
+                        selectedQuality = requestedQuality;
+                        break;
+                    }
+                }
+            }
+            
+            if (!streamUrl) {
+                const fallbackOrder = ['1080', '720', '480', '380', '240', 'auto'];
+                for (const q of fallbackOrder) {
+                    if (qualities[q] && Array.isArray(qualities[q])) {
+                        for (const stream of qualities[q]) {
+                            if (stream.url) {
+                                streamUrl = stream.url;
+                                selectedQuality = Object.keys(qualityMap).find(key => qualityMap[key] === q) || q;
+                                break;
+                            }
+                        }
+                        if (streamUrl) break;
+                    }
+                }
+            }
+        }
+        
+        return { streamUrl, title, duration, selectedQuality };
+    } catch (error) {
+        console.error('Erreur metadata:', error.message);
+        return { streamUrl: null, title: 'video', duration: 0, selectedQuality: null };
+    }
+}
+
 app.get('/', (req, res) => {
     res.json({
         message: 'Bienvenue sur clip_dai API',
@@ -35,8 +105,9 @@ app.get('/', (req, res) => {
             download: {
                 method: 'GET',
                 path: '/download?video=<URL_VIDEO>&type=<MP3|MP4>&qualite=<360p|480p|720p>',
-                description: 'Télécharger une vidéo en MP3 ou MP4',
-                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p'
+                description: 'Télécharger directement une vidéo en MP3 ou MP4',
+                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p',
+                note: 'Le fichier se télécharge directement sur votre appareil'
             }
         }
     });
@@ -130,109 +201,98 @@ app.get('/download', async (req, res) => {
             videoId = urlMatch[1];
         }
 
-        const videoInfoUrl = `${DAILYMOTION_API}/video/${videoId}?fields=id,title,duration,stream_h264_url,stream_h264_hd_url,stream_h264_hd1080_url,stream_h264_hq_url,stream_h264_ld_url`;
+        console.log(`Téléchargement vidéo: ${videoId}, type: ${fileType}, qualité: ${quality}`);
         
-        let videoInfo;
-        try {
-            const infoResponse = await axios.get(videoInfoUrl);
-            videoInfo = infoResponse.data;
-        } catch (e) {
-            const basicInfoUrl = `${DAILYMOTION_API}/video/${videoId}?fields=id,title,duration`;
-            const basicResponse = await axios.get(basicInfoUrl);
-            videoInfo = basicResponse.data;
-        }
-
-        const embedUrl = `https://www.dailymotion.com/embed/video/${videoId}`;
+        const { streamUrl, title, duration, selectedQuality } = await getVideoStreamUrl(videoId, quality);
         
-        let playerHtml;
-        try {
-            const playerResponse = await axios.get(embedUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
+        if (!streamUrl) {
+            return res.status(404).json({
+                error: 'Stream non disponible',
+                message: 'Impossible de récupérer le lien de téléchargement pour cette vidéo',
+                video_id: videoId
             });
-            playerHtml = playerResponse.data;
-        } catch (e) {
-            playerHtml = '';
         }
 
-        let streamUrls = {};
+        console.log(`Stream URL trouvée, durée: ${duration}s, qualité: ${selectedQuality}`);
         
-        const qualityRegex = /"qualities":\s*\{([^}]+)\}/g;
-        const urlRegex = /"(\d+)":\s*\[\s*\{\s*"type":\s*"[^"]+",\s*"url":\s*"([^"]+)"/g;
+        const safeTitle = sanitizeFilename(title);
+        const filename = `${safeTitle}.${fileType.toLowerCase()}`;
         
-        let match;
-        while ((match = urlRegex.exec(playerHtml)) !== null) {
-            streamUrls[match[1]] = match[2].replace(/\\/g, '');
+        let ffmpegArgs;
+        
+        if (fileType === 'MP4') {
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+            
+            ffmpegArgs = [
+                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                '-i', streamUrl,
+                '-c:v', 'copy',
+                '-c:a', 'aac',
+                '-bsf:a', 'aac_adtstoasc',
+                '-movflags', 'frag_keyframe+empty_moov+faststart',
+                '-f', 'mp4',
+                'pipe:1'
+            ];
+        } else {
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+            
+            ffmpegArgs = [
+                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                '-i', streamUrl,
+                '-vn',
+                '-acodec', 'libmp3lame',
+                '-ab', '192k',
+                '-f', 'mp3',
+                'pipe:1'
+            ];
         }
-
-        const qualityMap = {
-            '360p': '380',
-            '480p': '480',
-            '720p': '720',
-            '1080p': '1080'
-        };
-
-        const requestedQuality = qualityMap[quality];
-        let downloadUrl = streamUrls[requestedQuality];
         
-        if (!downloadUrl) {
-            const fallbackQualities = ['720', '480', '380', '240'];
-            for (const q of fallbackQualities) {
-                if (streamUrls[q]) {
-                    downloadUrl = streamUrls[q];
-                    break;
+        console.log('Démarrage FFmpeg streaming...');
+        
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        
+        ffmpeg.stdout.pipe(res);
+        
+        ffmpeg.stderr.on('data', (data) => {
+            const output = data.toString();
+            if (output.includes('frame=') || output.includes('time=')) {
+                const timeMatch = output.match(/time=(\d+:\d+:\d+\.\d+)/);
+                if (timeMatch) {
+                    console.log(`Progression: ${timeMatch[1]}`);
                 }
             }
-        }
-
-        const downloadServices = [
-            `https://www.savethevideo.com/dailymotion-downloader?url=${encodeURIComponent(video)}`,
-            `https://dailymotiondownloader.net/en/?url=${encodeURIComponent(video)}`,
-            `https://veedmate.com/dailymotion-video-downloader/?url=${encodeURIComponent(video)}`
-        ];
-
-        res.json({
-            video_info: {
-                id: videoId,
-                titre: videoInfo.title || 'Titre non disponible',
-                duree: videoInfo.duration ? formatDuration(videoInfo.duration) : 'Non disponible',
-                url_originale: video
-            },
-            telechargement: {
-                type_demande: fileType,
-                qualite_demandee: quality,
-                instruction: 'Pour télécharger la vidéo, utilisez un des services ci-dessous ou copiez le lien direct si disponible',
-                lien_direct: downloadUrl || null,
-                services_download: downloadServices,
-                note_mobile: 'Sur mobile, utilisez un des liens de service de téléchargement puis enregistrez le fichier dans votre galerie'
-            },
-            comment_telecharger_mobile: {
-                android: [
-                    '1. Cliquez sur un des liens de service de téléchargement',
-                    '2. Collez l\'URL de la vidéo si nécessaire',
-                    '3. Sélectionnez la qualité et le format (MP3/MP4)',
-                    '4. Appuyez sur "Télécharger"',
-                    '5. Le fichier sera sauvegardé dans votre dossier Téléchargements'
-                ],
-                iphone: [
-                    '1. Cliquez sur un des liens de service de téléchargement',
-                    '2. Collez l\'URL de la vidéo si nécessaire',
-                    '3. Sélectionnez la qualité et le format',
-                    '4. Maintenez appuyé sur le bouton de téléchargement',
-                    '5. Choisissez "Télécharger le fichier lié"',
-                    '6. Le fichier sera dans l\'app Fichiers'
-                ]
+        });
+        
+        ffmpeg.on('close', (code) => {
+            if (code === 0) {
+                console.log('Téléchargement terminé avec succès');
+            } else {
+                console.error('FFmpeg terminé avec code:', code);
             }
+        });
+        
+        ffmpeg.on('error', (err) => {
+            console.error('FFmpeg erreur:', err.message);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Erreur FFmpeg' });
+            }
+        });
+        
+        req.on('close', () => {
+            ffmpeg.kill('SIGKILL');
+            console.log('Client déconnecté, FFmpeg arrêté');
         });
 
     } catch (error) {
         console.error('Erreur download:', error.message);
-        res.status(500).json({
-            error: 'Erreur lors de la préparation du téléchargement',
-            message: error.message,
-            suggestion: 'Essayez de copier l\'URL de la vidéo et utilisez un service de téléchargement en ligne'
-        });
+        if (!res.headersSent) {
+            res.status(500).json({
+                error: 'Erreur lors du téléchargement',
+                message: error.message
+            });
+        }
     }
 });
 
@@ -269,5 +329,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`Routes disponibles:`);
     console.log(`  GET / - Documentation API`);
     console.log(`  GET /recherche?clip=<terme> - Rechercher des clips`);
-    console.log(`  GET /download?video=<url>&type=<MP3|MP4>&qualite=<360p|480p|720p>`);
+    console.log(`  GET /download?video=<url>&type=<MP3|MP4>&qualite=<360p|480p|720p> - Téléchargement direct`);
 });
