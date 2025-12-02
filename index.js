@@ -28,6 +28,59 @@ function sanitizeFilename(filename) {
     return filename.replace(/[^a-zA-Z0-9\u00C0-\u024F\s\-_]/g, '').trim().substring(0, 100) || 'video';
 }
 
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Mo';
+    const mb = bytes / (1024 * 1024);
+    if (mb < 1) {
+        const kb = bytes / 1024;
+        return `${kb.toFixed(1)} Ko`;
+    }
+    return `${mb.toFixed(1)} Mo`;
+}
+
+function estimateVideoSize(durationSeconds, quality) {
+    const bitrateMap = {
+        '1080p': 4000,
+        '720p': 2500,
+        '480p': 1000,
+        '360p': 600,
+        '240p': 300
+    };
+    
+    const bitrateKbps = bitrateMap[quality] || bitrateMap['360p'];
+    const sizeBytes = (bitrateKbps * 1000 / 8) * durationSeconds;
+    
+    return {
+        bytes: Math.round(sizeBytes),
+        formatted: formatFileSize(sizeBytes)
+    };
+}
+
+async function getVideoFileSize(streamUrl) {
+    try {
+        const response = await axios.head(streamUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.dailymotion.com/'
+            },
+            timeout: 5000
+        });
+        
+        const contentLength = response.headers['content-length'];
+        if (contentLength) {
+            const bytes = parseInt(contentLength, 10);
+            return {
+                bytes: bytes,
+                formatted: formatFileSize(bytes),
+                source: 'exact'
+            };
+        }
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
 async function getVideoStreamUrl(videoId, requestedQuality = '360p') {
     const metadataUrl = `https://www.dailymotion.com/player/metadata/video/${videoId}`;
     
@@ -109,6 +162,12 @@ app.get('/', (req, res) => {
                 description: 'Télécharger directement une vidéo en MP3 ou MP4',
                 exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p',
                 note: 'Le fichier se télécharge directement sur votre appareil'
+            },
+            videoinfo: {
+                method: 'GET',
+                path: '/videoinfo?video=<URL_VIDEO_OU_ID>',
+                description: 'Obtenir les informations détaillées d\'une vidéo avec tailles estimées par qualité',
+                exemple: '/videoinfo?video=x9bcqyw'
             }
         }
     });
@@ -136,15 +195,24 @@ app.get('/recherche', async (req, res) => {
         
         const videosFiltered = data.list
             .filter(video => video.duration >= MIN_DURATION_SECONDS && video.duration <= MAX_DURATION_SECONDS)
-            .map(video => ({
-                Titre: video.title,
-                Duree: formatDuration(video.duration),
-                Duree_secondes: video.duration,
-                Id_video: video.id,
-                Image_url: video.thumbnail_720_url || video.thumbnail_360_url || video.thumbnail_url,
-                Video_url: video.url,
-                Embed_url: video.embed_url
-            }));
+            .map(video => {
+                const taille360p = estimateVideoSize(video.duration, '360p');
+                const taille720p = estimateVideoSize(video.duration, '720p');
+                
+                return {
+                    Titre: video.title,
+                    Duree: formatDuration(video.duration),
+                    Duree_secondes: video.duration,
+                    Id_video: video.id,
+                    Image_url: video.thumbnail_720_url || video.thumbnail_360_url || video.thumbnail_url,
+                    Video_url: video.url,
+                    Embed_url: video.embed_url,
+                    Taille_estimee: {
+                        '360p': taille360p.formatted,
+                        '720p': taille720p.formatted
+                    }
+                };
+            });
 
         res.json({
             recherche: searchQuery,
@@ -294,6 +362,78 @@ app.get('/download', async (req, res) => {
                 message: error.message
             });
         }
+    }
+});
+
+app.get('/videoinfo', async (req, res) => {
+    try {
+        const { video } = req.query;
+        
+        if (!video) {
+            return res.status(400).json({
+                error: 'Paramètre manquant',
+                message: 'Veuillez fournir l\'URL ou l\'ID de la vidéo avec le paramètre "video"',
+                exemple: '/videoinfo?video=x9bcqyw'
+            });
+        }
+
+        let videoId = video;
+        const urlMatch = video.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/);
+        if (urlMatch) {
+            videoId = urlMatch[1];
+        }
+
+        const metadataUrl = `https://www.dailymotion.com/player/metadata/video/${videoId}`;
+        
+        const response = await axios.get(metadataUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.dailymotion.com/'
+            }
+        });
+        
+        const data = response.data;
+        const title = data.title || 'video';
+        const duration = data.duration || 0;
+        
+        const qualites = ['240p', '360p', '480p', '720p', '1080p'];
+        const taillesEstimees = {};
+        const qualitesDisponibles = [];
+        
+        for (const q of qualites) {
+            const taille = estimateVideoSize(duration, q);
+            taillesEstimees[q] = {
+                taille_estimee: taille.formatted,
+                bytes: taille.bytes
+            };
+        }
+        
+        if (data.qualities) {
+            const qualityMap = { '240': '240p', '380': '360p', '480': '480p', '720': '720p', '1080': '1080p' };
+            for (const q of Object.keys(data.qualities)) {
+                if (qualityMap[q]) {
+                    qualitesDisponibles.push(qualityMap[q]);
+                }
+            }
+        }
+
+        res.json({
+            video_id: videoId,
+            titre: title,
+            duree: formatDuration(duration),
+            duree_secondes: duration,
+            qualites_disponibles: qualitesDisponibles.length > 0 ? qualitesDisponibles : ['360p', '480p', '720p'],
+            tailles_par_qualite: taillesEstimees,
+            note: 'Les tailles sont des estimations basées sur le bitrate moyen par qualité'
+        });
+
+    } catch (error) {
+        console.error('Erreur videoinfo:', error.message);
+        res.status(500).json({
+            error: 'Erreur lors de la récupération des informations',
+            message: error.message
+        });
     }
 });
 
