@@ -1,0 +1,24 @@
+{
+  "name": "clip_dai",
+  "version": "1.0.0",
+  "description": "Dailymotion video scraper API - Search and download clips",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [
+    "dailymotion",
+    "scraper",
+    "api",
+    "video",
+    "download"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}
