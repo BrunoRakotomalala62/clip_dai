@@ -31,7 +31,7 @@ GET /recherche?clip=<terme de recherche>
 }
 ```
 
-### 2. Téléchargement de vidéo
+### 2. Téléchargement direct de vidéo
 ```
 GET /download?video=<URL_VIDEO>&type=<MP3|MP4>&qualite=<360p|480p|720p|1080p>
 ```
@@ -42,13 +42,14 @@ GET /download?video=<URL_VIDEO>&type=<MP3|MP4>&qualite=<360p|480p|720p|1080p>
 
 **Exemple:** `/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p`
 
+**Note:** Le fichier se télécharge directement sur votre appareil (téléphone, ordinateur) sans passer par des services externes.
+
 ## Structure du Projet
 ```
 clip_dai/
 ├── index.js          # Serveur Express avec les routes API
 ├── package.json      # Dépendances Node.js
 ├── vercel.json       # Configuration pour déploiement Vercel
-├── web.html          # Référence structure page Dailymotion
 └── replit.md         # Cette documentation
 ```
 
@@ -56,16 +57,28 @@ clip_dai/
 - Node.js 20
 - Express.js 4.18
 - Axios pour les requêtes HTTP
+- FFmpeg pour la conversion vidéo/audio
 - CORS activé
 
 ## API Dailymotion Utilisée
-- Endpoint: `https://api.dailymotion.com/videos`
-- Pas de clé API requise pour la recherche basique
+- Endpoint recherche: `https://api.dailymotion.com/videos`
+- Endpoint metadata: `https://www.dailymotion.com/player/metadata/video/{id}`
+- Pas de clé API requise
 - Limite: 100 résultats par requête
+
+## Fonctionnalités
+- Recherche de vidéos Dailymotion
+- Filtrage automatique des vidéos de moins de 15 minutes
+- Téléchargement direct MP4 (streaming via FFmpeg)
+- Conversion et téléchargement MP3 (extraction audio)
+- Sélection de qualité (360p, 480p, 720p, 1080p avec fallback)
 
 ## Déploiement
 - **Développement:** `npm start` (port 5000)
 - **Vercel:** Configuré via vercel.json
 
 ## Recent Changes
+- **2025-12-02:** Implémentation du téléchargement direct via FFmpeg streaming
+- **2025-12-02:** Support MP3 avec conversion audio en temps réel
+- **2025-12-02:** Sélection de qualité vidéo avec fallback automatique
 - **2025-12-02:** Création initiale de l'API avec routes /recherche et /download
