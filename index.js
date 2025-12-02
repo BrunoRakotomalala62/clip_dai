@@ -10,6 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 const DAILYMOTION_API = 'https://api.dailymotion.com';
+const MIN_DURATION_SECONDS = 2 * 60;
 const MAX_DURATION_SECONDS = 15 * 60;
 
 function formatDuration(seconds) {
@@ -134,7 +135,7 @@ app.get('/recherche', async (req, res) => {
         const data = response.data;
         
         const videosFiltered = data.list
-            .filter(video => video.duration <= MAX_DURATION_SECONDS)
+            .filter(video => video.duration >= MIN_DURATION_SECONDS && video.duration <= MAX_DURATION_SECONDS)
             .map(video => ({
                 Titre: video.title,
                 Duree: formatDuration(video.duration),
@@ -148,7 +149,7 @@ app.get('/recherche', async (req, res) => {
         res.json({
             recherche: searchQuery,
             total_resultats: videosFiltered.length,
-            filtre: 'Vidéos de moins de 15 minutes uniquement',
+            filtre: 'Vidéos entre 2 et 15 minutes uniquement',
             resultats: videosFiltered
         });
 
@@ -309,7 +310,7 @@ app.get('/api/search', async (req, res) => {
         
         const response = await axios.get(apiUrl);
         const videos = response.data.list
-            .filter(v => v.duration <= MAX_DURATION_SECONDS)
+            .filter(v => v.duration >= MIN_DURATION_SECONDS && v.duration <= MAX_DURATION_SECONDS)
             .map(v => ({
                 id: v.id,
                 title: v.title,
