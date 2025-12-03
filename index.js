@@ -81,16 +81,50 @@ async function getVideoFileSize(streamUrl) {
     }
 }
 
-async function getVideoStreamUrl(videoId, requestedQuality = '360p') {
+async function parseM3u8ForLowestQuality(m3u8Url) {
+    try {
+        const response = await axios.get(m3u8Url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.dailymotion.com/'
+            }
+        });
+        
+        const content = response.data;
+        const lines = content.split('\n');
+        
+        let lowestBandwidth = Infinity;
+        let lowestQualityUrl = null;
+        let selectedQuality = null;
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (line.startsWith('#EXT-X-STREAM-INF:')) {
+                const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
+                const nameMatch = line.match(/NAME="(\d+)"/);
+                
+                if (bandwidthMatch) {
+                    const bandwidth = parseInt(bandwidthMatch[1]);
+                    const qualityName = nameMatch ? nameMatch[1] : 'unknown';
+                    
+                    if (bandwidth < lowestBandwidth) {
+                        lowestBandwidth = bandwidth;
+                        lowestQualityUrl = lines[i + 1]?.trim();
+                        selectedQuality = qualityName === '380' ? '360p' : qualityName + 'p';
+                    }
+                }
+            }
+        }
+        
+        return { url: lowestQualityUrl, quality: selectedQuality };
+    } catch (error) {
+        console.error('Erreur parsing m3u8:', error.message);
+        return { url: null, quality: null };
+    }
+}
+
+async function getVideoStreamUrl(videoId) {
     const metadataUrl = `https://www.dailymotion.com/player/metadata/video/${videoId}`;
-    
-    const qualityMap = {
-        '1080p': '1080',
-        '720p': '720',
-        '480p': '480',
-        '360p': '380',
-        '240p': '240'
-    };
     
     try {
         const response = await axios.get(metadataUrl, {
@@ -110,30 +144,37 @@ async function getVideoStreamUrl(videoId, requestedQuality = '360p') {
         
         if (data.qualities) {
             const qualities = data.qualities;
-            const targetQuality = qualityMap[requestedQuality] || '380';
             
-            if (qualities[targetQuality] && Array.isArray(qualities[targetQuality])) {
-                for (const stream of qualities[targetQuality]) {
-                    if (stream.url) {
-                        streamUrl = stream.url;
-                        selectedQuality = requestedQuality;
-                        break;
+            const fallbackOrder = ['240', '380', '480'];
+            for (const q of fallbackOrder) {
+                if (qualities[q] && Array.isArray(qualities[q])) {
+                    for (const stream of qualities[q]) {
+                        if (stream.url) {
+                            streamUrl = stream.url;
+                            selectedQuality = q === '380' ? '360p' : (q === '240' ? '240p' : '480p');
+                            break;
+                        }
                     }
+                    if (streamUrl) break;
                 }
             }
             
-            if (!streamUrl) {
-                const fallbackOrder = ['1080', '720', '480', '380', '240', 'auto'];
-                for (const q of fallbackOrder) {
-                    if (qualities[q] && Array.isArray(qualities[q])) {
-                        for (const stream of qualities[q]) {
-                            if (stream.url) {
-                                streamUrl = stream.url;
-                                selectedQuality = Object.keys(qualityMap).find(key => qualityMap[key] === q) || q;
-                                break;
-                            }
+            if (!streamUrl && qualities['auto'] && Array.isArray(qualities['auto'])) {
+                for (const stream of qualities['auto']) {
+                    if (stream.url) {
+                        const m3u8Url = stream.url;
+                        console.log('Parsing m3u8 pour trouver la qualité la plus basse...');
+                        const lowestQuality = await parseM3u8ForLowestQuality(m3u8Url);
+                        
+                        if (lowestQuality.url) {
+                            streamUrl = lowestQuality.url;
+                            selectedQuality = lowestQuality.quality;
+                            console.log(`Qualité sélectionnée: ${selectedQuality}`);
+                        } else {
+                            streamUrl = m3u8Url;
+                            selectedQuality = 'auto';
                         }
-                        if (streamUrl) break;
+                        break;
                     }
                 }
             }
@@ -240,7 +281,6 @@ app.get('/download', async (req, res) => {
 
         const validTypes = ['MP3', 'MP4'];
         const fileType = type.toUpperCase();
-        const quality = '360p';
         
         if (!validTypes.includes(fileType)) {
             return res.status(400).json({
@@ -256,9 +296,9 @@ app.get('/download', async (req, res) => {
             videoId = urlMatch[1];
         }
 
-        console.log(`Téléchargement vidéo: ${videoId}, type: ${fileType}, qualité: ${quality}`);
+        console.log(`Téléchargement vidéo: ${videoId}, type: ${fileType}`);
         
-        const { streamUrl, title, duration, selectedQuality } = await getVideoStreamUrl(videoId, quality);
+        const { streamUrl, title, duration, selectedQuality } = await getVideoStreamUrl(videoId);
         
         if (!streamUrl) {
             return res.status(404).json({
