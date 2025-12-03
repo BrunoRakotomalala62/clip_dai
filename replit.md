@@ -77,7 +77,19 @@ clip_dai/
 - **Développement:** `npm start` (port 5000)
 - **Vercel:** Configuré via vercel.json
 
+## Configuration Keep-Alive (Anti-veille Render.com)
+L'API inclut un système d'auto-ping pour éviter la mise en veille sur Render.com.
+
+**Configuration sur Render.com:**
+1. Dans les paramètres de votre service, ajoutez une variable d'environnement:
+   - `API_URL` = `https://votre-app.onrender.com`
+   
+   OU Render.com définit automatiquement `RENDER_EXTERNAL_URL`
+
+2. L'API se "pingera" automatiquement toutes les 14 minutes pour rester éveillée.
+
 ## Recent Changes
+- **2025-12-03:** Ajout du système Keep-Alive auto-ping pour éviter la mise en veille sur Render.com
 - **2025-12-02:** Implémentation du téléchargement direct via FFmpeg streaming
 - **2025-12-02:** Support MP3 avec conversion audio en temps réel
 - **2025-12-02:** Sélection de qualité vidéo avec fallback automatique

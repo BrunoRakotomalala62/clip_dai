@@ -2,6 +2,9 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const { spawn } = require('child_process');
+const cron = require('node-cron');
+const https = require('https');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -486,4 +489,20 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`  GET /recherche?clip=<terme> - Rechercher des clips`);
     console.log(`  GET /download?video=<url>&type=<MP3|MP4> - Téléchargement direct (360p uniquement)`);
     console.log(`  GET /videoinfo?video=<id> - Informations vidéo (360p)`);
+    
+    const RENDER_URL = process.env.RENDER_EXTERNAL_URL || process.env.API_URL;
+    
+    if (RENDER_URL) {
+        cron.schedule('*/14 * * * *', () => {
+            const protocol = RENDER_URL.startsWith('https') ? https : http;
+            protocol.get(RENDER_URL, (res) => {
+                console.log(`[Keep-Alive] Ping automatique réussi: ${res.statusCode} - ${new Date().toLocaleString()}`);
+            }).on('error', (err) => {
+                console.error(`[Keep-Alive] Ping échoué: ${err.message}`);
+            });
+        });
+        console.log(`[Keep-Alive] Auto-ping activé toutes les 14 minutes vers: ${RENDER_URL}`);
+    } else {
+        console.log(`[Keep-Alive] Auto-ping désactivé (définir RENDER_EXTERNAL_URL ou API_URL pour l'activer)`);
+    }
 });
