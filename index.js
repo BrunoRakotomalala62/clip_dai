@@ -158,15 +158,15 @@ app.get('/', (req, res) => {
             },
             download: {
                 method: 'GET',
-                path: '/download?video=<URL_VIDEO>&type=<MP3|MP4>&qualite=<360p|480p|720p>',
-                description: 'Télécharger directement une vidéo en MP3 ou MP4',
-                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p',
-                note: 'Le fichier se télécharge directement sur votre appareil'
+                path: '/download?video=<URL_VIDEO>&type=<MP3|MP4>',
+                description: 'Télécharger directement une vidéo en MP3 ou MP4 (qualité 360p)',
+                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4',
+                note: 'Le fichier se télécharge directement sur votre appareil en qualité 360p'
             },
             videoinfo: {
                 method: 'GET',
                 path: '/videoinfo?video=<URL_VIDEO_OU_ID>',
-                description: 'Obtenir les informations détaillées d\'une vidéo avec tailles estimées par qualité',
+                description: 'Obtenir les informations détaillées d\'une vidéo (qualité 360p)',
                 exemple: '/videoinfo?video=x9bcqyw'
             }
         }
@@ -197,20 +197,16 @@ app.get('/recherche', async (req, res) => {
             .filter(video => video.duration >= MIN_DURATION_SECONDS && video.duration <= MAX_DURATION_SECONDS)
             .map(video => {
                 const taille360p = estimateVideoSize(video.duration, '360p');
-                const taille720p = estimateVideoSize(video.duration, '720p');
                 
                 return {
                     Titre: video.title,
                     Duree: formatDuration(video.duration),
                     Duree_secondes: video.duration,
                     Id_video: video.id,
-                    Image_url: video.thumbnail_720_url || video.thumbnail_360_url || video.thumbnail_url,
+                    Image_url: video.thumbnail_360_url || video.thumbnail_url,
                     Video_url: video.url,
                     Embed_url: video.embed_url,
-                    Taille_estimee: {
-                        '360p': taille360p.formatted,
-                        '720p': taille720p.formatted
-                    }
+                    Taille_estimee_360p: taille360p.formatted
                 };
             });
 
@@ -232,35 +228,25 @@ app.get('/recherche', async (req, res) => {
 
 app.get('/download', async (req, res) => {
     try {
-        const { video, type = 'MP4', qualite = '360p' } = req.query;
+        const { video, type = 'MP4' } = req.query;
         
         if (!video) {
             return res.status(400).json({
                 error: 'Paramètre manquant',
                 message: 'Veuillez fournir l\'URL de la vidéo avec le paramètre "video"',
-                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4&qualite=720p'
+                exemple: '/download?video=https://www.dailymotion.com/video/x9bcqyw&type=MP4'
             });
         }
 
         const validTypes = ['MP3', 'MP4'];
-        const validQualities = ['360p', '480p', '720p', '1080p'];
-        
         const fileType = type.toUpperCase();
-        const quality = qualite.toLowerCase();
+        const quality = '360p';
         
         if (!validTypes.includes(fileType)) {
             return res.status(400).json({
                 error: 'Type invalide',
                 message: 'Le type doit être MP3 ou MP4',
                 types_valides: validTypes
-            });
-        }
-        
-        if (!validQualities.includes(quality)) {
-            return res.status(400).json({
-                error: 'Qualité invalide',
-                message: 'La qualité doit être 360p, 480p, 720p ou 1080p',
-                qualites_valides: validQualities
             });
         }
 
@@ -397,25 +383,11 @@ app.get('/videoinfo', async (req, res) => {
         const title = data.title || 'video';
         const duration = data.duration || 0;
         
-        const qualites = ['240p', '360p', '480p', '720p', '1080p'];
-        const taillesEstimees = {};
-        const qualitesDisponibles = [];
+        const taille360p = estimateVideoSize(duration, '360p');
         
-        for (const q of qualites) {
-            const taille = estimateVideoSize(duration, q);
-            taillesEstimees[q] = {
-                taille_estimee: taille.formatted,
-                bytes: taille.bytes
-            };
-        }
-        
-        if (data.qualities) {
-            const qualityMap = { '240': '240p', '380': '360p', '480': '480p', '720': '720p', '1080': '1080p' };
-            for (const q of Object.keys(data.qualities)) {
-                if (qualityMap[q]) {
-                    qualitesDisponibles.push(qualityMap[q]);
-                }
-            }
+        let disponible360p = false;
+        if (data.qualities && data.qualities['380']) {
+            disponible360p = true;
         }
 
         res.json({
@@ -423,9 +395,11 @@ app.get('/videoinfo', async (req, res) => {
             titre: title,
             duree: formatDuration(duration),
             duree_secondes: duration,
-            qualites_disponibles: qualitesDisponibles.length > 0 ? qualitesDisponibles : ['360p', '480p', '720p'],
-            tailles_par_qualite: taillesEstimees,
-            note: 'Les tailles sont des estimations basées sur le bitrate moyen par qualité'
+            qualite: '360p',
+            disponible: disponible360p,
+            taille_estimee: taille360p.formatted,
+            taille_bytes: taille360p.bytes,
+            note: 'Taille estimée basée sur le bitrate moyen 360p'
         });
 
     } catch (error) {
@@ -470,5 +444,6 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`Routes disponibles:`);
     console.log(`  GET / - Documentation API`);
     console.log(`  GET /recherche?clip=<terme> - Rechercher des clips`);
-    console.log(`  GET /download?video=<url>&type=<MP3|MP4>&qualite=<360p|480p|720p> - Téléchargement direct`);
+    console.log(`  GET /download?video=<url>&type=<MP3|MP4> - Téléchargement direct (360p uniquement)`);
+    console.log(`  GET /videoinfo?video=<id> - Informations vidéo (360p)`);
 });
