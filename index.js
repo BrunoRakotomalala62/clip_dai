@@ -190,6 +190,14 @@ async function getVideoStreamUrl(videoId) {
     }
 }
 
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
 app.get('/', (req, res) => {
     res.json({
         message: 'Bienvenue sur clip_dai API',
@@ -493,15 +501,17 @@ app.listen(PORT, '0.0.0.0', () => {
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || process.env.API_URL;
     
     if (RENDER_URL) {
+        const healthUrl = RENDER_URL.endsWith('/') ? `${RENDER_URL}health` : `${RENDER_URL}/health`;
+        
         cron.schedule('*/14 * * * *', () => {
-            const protocol = RENDER_URL.startsWith('https') ? https : http;
-            protocol.get(RENDER_URL, (res) => {
+            const protocol = healthUrl.startsWith('https') ? https : http;
+            protocol.get(healthUrl, (res) => {
                 console.log(`[Keep-Alive] Ping automatique réussi: ${res.statusCode} - ${new Date().toLocaleString()}`);
             }).on('error', (err) => {
                 console.error(`[Keep-Alive] Ping échoué: ${err.message}`);
             });
         });
-        console.log(`[Keep-Alive] Auto-ping activé toutes les 14 minutes vers: ${RENDER_URL}`);
+        console.log(`[Keep-Alive] Auto-ping activé toutes les 14 minutes vers: ${healthUrl}`);
     } else {
         console.log(`[Keep-Alive] Auto-ping désactivé (définir RENDER_EXTERNAL_URL ou API_URL pour l'activer)`);
     }
