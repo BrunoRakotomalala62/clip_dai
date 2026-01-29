@@ -2,6 +2,13 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+// Configuration du chemin FFmpeg pour Render
+const localFfmpegPath = path.join(__dirname, 'bin', 'ffmpeg');
+const FFMPEG_CMD = fs.existsSync(localFfmpegPath) ? localFfmpegPath : 'ffmpeg';
+console.log(`Utilisation de FFmpeg: ${FFMPEG_CMD}`);
 const cron = require('node-cron');
 const https = require('https');
 const http = require('http');
@@ -363,7 +370,7 @@ app.get('/download', async (req, res) => {
         
         console.log('Démarrage FFmpeg streaming...');
         
-        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        const ffmpeg = spawn(FFMPEG_CMD, ffmpegArgs);
         
         ffmpeg.stdout.pipe(res);
         
