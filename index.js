@@ -85,11 +85,14 @@ async function getVideoFileSize(streamUrl) {
 }
 
 async function parseM3u8ForLowestQuality(m3u8Url) {
+    if (!m3u8Url) return { url: null, quality: null };
     try {
         const response = await axios.get(m3u8Url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://www.dailymotion.com/'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': 'https://www.dailymotion.com/',
+                'Accept': 'application/x-mpegURL, text/plain, */*',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
             }
         });
         
@@ -148,17 +151,20 @@ async function getVideoStreamUrl(videoId) {
         if (data.qualities) {
             const qualities = data.qualities;
             
-            const fallbackOrder = ['240', '380', '480'];
+            // Priorité aux flux directs MP4 si disponibles (souvent plus stables)
+            const fallbackOrder = ['240', '380', '480', '720', '1080'];
             for (const q of fallbackOrder) {
                 if (qualities[q] && Array.isArray(qualities[q])) {
-                    for (const stream of qualities[q]) {
-                        if (stream.url) {
-                            streamUrl = stream.url;
-                            selectedQuality = q === '380' ? '360p' : (q === '240' ? '240p' : '480p');
-                            break;
-                        }
+                    // Chercher un flux qui n'est pas un m3u8 si possible
+                    const directStream = qualities[q].find(s => s.type === 'video/mp4' || (s.url && s.url.includes('.mp4')));
+                    const anyStream = qualities[q][0];
+                    const selectedStream = directStream || anyStream;
+
+                    if (selectedStream && selectedStream.url) {
+                        streamUrl = selectedStream.url;
+                        selectedQuality = q === '380' ? '360p' : q + 'p';
+                        break;
                     }
-                    if (streamUrl) break;
                 }
             }
             
@@ -382,7 +388,17 @@ app.get('/download', async (req, res) => {
         ffmpeg.on('error', (err) => {
             console.error('FFmpeg erreur:', err.message);
             if (!res.headersSent) {
-                res.status(500).json({ error: 'Erreur FFmpeg' });
+                res.status(500).json({ 
+                    error: 'Erreur FFmpeg',
+                    message: err.message 
+                });
+            }
+        });
+
+        // Gestion de la fermeture du flux de réponse
+        res.on('finish', () => {
+            if (ffmpeg.exitCode === null) {
+                ffmpeg.kill('SIGKILL');
             }
         });
         
