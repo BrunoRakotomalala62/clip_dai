@@ -7,8 +7,23 @@ const fs = require('fs');
 
 // Configuration du chemin FFmpeg pour Render
 const localFfmpegPath = path.join(__dirname, 'bin', 'ffmpeg');
-const FFMPEG_CMD = fs.existsSync(localFfmpegPath) ? localFfmpegPath : 'ffmpeg';
-console.log(`Utilisation de FFmpeg: ${FFMPEG_CMD}`);
+let FFMPEG_CMD = 'ffmpeg';
+
+if (fs.existsSync(localFfmpegPath)) {
+    FFMPEG_CMD = localFfmpegPath;
+    console.log(`Binaire FFmpeg local trouvé: ${FFMPEG_CMD}`);
+} else {
+    console.log("FFmpeg local non trouvé, utilisation de la commande 'ffmpeg' du système");
+}
+
+// Vérification de la version de ffmpeg au démarrage
+const checkFfmpeg = spawn(FFMPEG_CMD, ['-version']);
+checkFfmpeg.on('error', (err) => {
+    console.error(`ATTENTION: FFmpeg (${FFMPEG_CMD}) n'est pas accessible:`, err.message);
+});
+checkFfmpeg.stdout.on('data', (data) => {
+    console.log(`FFmpeg opérationnel: ${data.toString().split('\n')[0]}`);
+});
 const cron = require('node-cron');
 const https = require('https');
 const http = require('http');
